@@ -2,28 +2,50 @@ package com.pushtechnology.example.mongo;
 
 import com.beust.jcommander.Parameter;
 
+/**
+ * Command line arguments, populated by JCommander.
+ *
+ * @author mcowie
+ */
 public class CommandlineArgs {
 
-    @Parameter(names={"--mongoHost", "-mh"}, required=true, description="host server to connect to in format host[:port]")
+    @Parameter(
+        names = {"--mongoHost", "-mh"},
+        required = true,
+        description = "host server to connect to in format host[:port]")
     private String mongoHost;
-    
-    @Parameter(names={"--mongoDatabase", "-md"}, required=true, description="name of a MongoDB database")
+
+    @Parameter(
+        names = {"--mongoDatabase", "-md"},
+        required = true,
+        description = "name of a MongoDB database")
     private String mongoDatabase;
-    
-    @Parameter(names={"--mongoCollection", "-mc"}, required=true, description="name of a MongoDB collection")
+
+    @Parameter(
+        names = {"--mongoCollection", "-mc"},
+        required = true,
+        description = "name of a MongoDB collection")
     private String mongoCollection;
-    
-    
-    @Parameter(names={"--diffusionURL", "-du"}, required=true)
+
+    @Parameter(
+        names = {"--diffusionURL", "-du"},
+        required = true)
     private String diffusionURL;
-    
-    @Parameter(names={"--diffusionPrincipal", "-dp"}, required=false)
+
+    @Parameter(
+        names = {"--diffusionPrincipal", "-dp"},
+        required = false)
     private String diffusionPrincipal;
-    
-    @Parameter(names={"--diffusionCredentials", "-dc"}, required=false)
+
+    @Parameter(
+        names = {"--diffusionCredentials", "-dc"},
+        required = false)
     private String diffusionCredentials;
-    
-    @Parameter(names={"--topic", "-dt"}, required=false, description="Root adapter topic")
+
+    @Parameter(
+        names = {"--topic", "-dt"},
+        required = false,
+        description = "Root adapter topic")
     private String topic = "MongoDB";
 
     /**

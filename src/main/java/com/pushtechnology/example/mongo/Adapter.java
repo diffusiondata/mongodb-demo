@@ -42,8 +42,14 @@ import com.pushtechnology.diffusion.client.session.Session;
 import com.pushtechnology.diffusion.client.topics.details.TopicType;
 import com.pushtechnology.diffusion.datatype.json.JSON;
 
-public class Adapter {
-    
+/**
+ * An Adapter that reflects the JSON documents within a Mongo collection
+ * as topics in a Diffusion/Reappt server.
+ *
+ * @author mcowie
+ */
+public final class Adapter {
+
     private static final Logger LOG = LoggerFactory.getLogger(Adapter.class);
 
     private final MongoCollection<Document> collection;
@@ -56,99 +62,136 @@ public class Adapter {
     private final String commandNamespaceName;
     private final String collectionNamespaceName;
 
+    /**
+     * Command line bootstrap method.
+     */
     public static void main(String[] argv) throws Exception {
-        
+
         final CommandlineArgs args = new CommandlineArgs();
         final JCommander jc = new JCommander(args);
         try {
             jc.parse(argv);
-            
-        } catch(ParameterException ex) {
+        }
+        catch (ParameterException ex) {
             jc.usage();
             System.exit(1);
         }
-        
+
         final MongoClient mongoClient = new MongoClient(args.getMongoHost());
-        final MongoCollection<Document> collection = getCollection(mongoClient, args.getMongoDatabase(), args.getMongoCollection());
-        final MongoCollection<Document> oplog = getCollection(mongoClient, "local", "oplog.rs");
-        
+        final MongoCollection<Document> collection = getCollection(mongoClient,
+            args.getMongoDatabase(),
+            args.getMongoCollection());
+
+        final MongoCollection<Document> oplog = getCollection(mongoClient,
+            "local",
+            "oplog.rs");
+
         final Session session = Diffusion.sessions()
             .principal("admin")
             .password("password")
             .noReconnection()
             .open("ws://localhost:8080");
 
-        final String topicRoot = args.getTopic() + "/" + args.getMongoDatabase() + "/" + args.getMongoCollection();
+        final String topicRoot = args.getTopic() + "/" +
+            args.getMongoDatabase() + "/" +
+            args.getMongoCollection();
+
         Adapter.build(session, collection, oplog, topicRoot).run();
         mongoClient.close();
     }
 
-    private static MongoCollection<Document> getCollection(final MongoClient mongoClient, String databaseName, String collectionName) {
+    private static MongoCollection<Document> getCollection(
+        final MongoClient mongoClient, String databaseName,
+        String collectionName) {
         final MongoDatabase database = mongoClient.getDatabase(databaseName);
         return database.getCollection(collectionName);
     }
-    
-    public static Adapter build(Session session, MongoCollection<Document> collection, MongoCollection<Document> oplog, String topicRoot) throws InterruptedException, TimeoutException {
+
+    /**
+     * Build an Adapter.
+     * <P>
+     *
+     * @param session Configured Diffusion session.
+     * @param collection Source of documents for reflection.
+     * @param oplog Collection holding the MongoDB replication operation log.
+     * @param topicRoot Topic under which other topics are to be created.
+     * @return a ready-to-use Adapter
+     * @throws InterruptedException if the current thread was interrupted while waiting for update rights
+     * @throws TimeoutException if the adapter takes more than 10s to exclusive update rights on the topic tree
+     */
+    public static Adapter build(Session session,
+        MongoCollection<Document> collection,
+        MongoCollection<Document> oplog,
+        String topicRoot) throws InterruptedException, TimeoutException {
         final Exchanger<ValueUpdater<JSON>> exchanger = new Exchanger<>();
-        
-        final TopicUpdateControl topicUpdateControl = session.feature(TopicUpdateControl.class);
-        topicUpdateControl.registerUpdateSource(topicRoot, new UpdateSource.Default(){
-            @Override
-            public void onActive(String topicPath, Updater updater) {
-                try {
-                    exchanger.exchange(updater.valueUpdater(JSON.class));
+
+        final TopicUpdateControl topicUpdateControl =
+            session.feature(TopicUpdateControl.class);
+        topicUpdateControl.registerUpdateSource(topicRoot,
+            new UpdateSource.Default() {
+                @Override
+                public void onActive(String topicPath, Updater updater) {
+                    try {
+                        exchanger.exchange(updater.valueUpdater(JSON.class));
+                    }
+                    catch (InterruptedException ex) {
+                        throw new AssertionError(ex);
+                    }
                 }
-                catch (Exception ex) {
-                    throw new AssertionError(ex);
-                }
-            }});
-        
-        final ValueUpdater<JSON> valueUpdater = exchanger.exchange(null, 10, TimeUnit.SECONDS);
+            });
+
+        final ValueUpdater<JSON> valueUpdater =
+            exchanger.exchange(null, 10, TimeUnit.SECONDS);
         final TopicControl topicControl = session.feature(TopicControl.class);
 
-        topicControl.removeTopicsWithSession(topicRoot, new TopicTreeHandler.Default());
-        
+        topicControl.removeTopicsWithSession(topicRoot,
+            new TopicTreeHandler.Default());
+
         final MongoNamespace namespace =
-            new MongoNamespace(collection.getNamespace().getDatabaseName(), "$cmd");
-        
+            new MongoNamespace(collection.getNamespace().getDatabaseName(),
+                "$cmd");
+
         return new Adapter(topicControl,
             valueUpdater,
-            collection, 
+            collection,
             oplog,
             namespace.toString(),
             topicRoot);
     }
 
-    private Adapter(TopicControl topicControl, 
+    private Adapter(TopicControl topicControl,
         ValueUpdater<JSON> valueUpdater,
-        MongoCollection<Document> collection, 
+        MongoCollection<Document> collection,
         MongoCollection<Document> oplog,
         String commandNamespaceName,
         String topicRoot) {
-        
+
         this.topicControl = topicControl;
         this.valueUpdater = valueUpdater;
         this.collection = collection;
         this.oplog = oplog;
         this.topicRoot = topicRoot;
 
-
-        this.commandNamespaceName = new MongoNamespace(collection.getNamespace().getDatabaseName(), "$cmd").toString();
+        this.commandNamespaceName =
+            new MongoNamespace(collection.getNamespace().getDatabaseName(),
+                "$cmd").toString();
         this.collectionNamespaceName = collection.getNamespace().toString();
     }
-    
+
     /**
-     * Enumerate all documents in the collection, then relay changes. 
+     * Enumerate all documents in the collection, then relay changes.
      */
     private void run() {
         final long timeNow = System.currentTimeMillis();
         long topicCount = 0;
-        LOG.info("Trascribing topics from {} to {}", collection.getNamespace(), topicRoot);
-        try (final MongoCursor<Document> cursor = collection.find().iterator()) {
+        LOG.info("Trascribing topics from {} to {}", collection.getNamespace(),
+            topicRoot);
+        try (
+            final MongoCursor<Document> cursor = collection.find().iterator()) {
             while (cursor.hasNext()) {
                 final Document update = cursor.next();
                 LOG.debug("received: {}", update.toJson());
-                
+
                 transcribeDocument(update);
                 topicCount++;
             }
@@ -163,36 +206,37 @@ public class Adapter {
     private void transcribeDocument(Document update) {
         final ObjectId id = update.getObjectId("_id");
         final String topicPath = topicPaths.get(id);
-        
+
         if (topicPath == null) {
             final String newTopicPath = topicRoot + "/" + id.toString();
             LOG.info("Creating {}", newTopicPath);
             topicPaths.put(id, newTopicPath);
-            topicControl.addTopic(newTopicPath, 
-                TopicType.JSON, 
-                toBytes(update.toJson()), 
+            topicControl.addTopic(newTopicPath,
+                TopicType.JSON,
+                toBytes(update.toJson()),
                 new AddCallback.Default());
-        } else {
+        }
+        else {
             LOG.info("Updating {}", topicPath);
-            valueUpdater.update(topicPath, toBytes(update.toJson()), new UpdateCallback.Default());
+            valueUpdater.update(topicPath, toBytes(update.toJson()),
+                new UpdateCallback.Default());
         }
     }
-    
+
     /**
-     * Subscribe to {@code local.oplog.rs}, listening for relevant changes
+     * Subscribe to {@code local.oplog.rs}, listening for relevant changes.
      */
     private void relayChanges(long timeNow) {
         LOG.info("Relaying changes {} to {}", oplog.getNamespace(), topicRoot);
-        
-        final BsonTimestamp now = new BsonTimestamp((int)(timeNow/1000), 1);        
-        final Bson filter =  and( 
+
+        final BsonTimestamp now = new BsonTimestamp((int) (timeNow / 1000), 1);
+        final Bson filter = and(
             gt("ts", now),
             or(
-                in("op", "i", "u","d"), // insert, update & delete document
+                in("op", "i", "u", "d"), // insert, update & delete document
                 and(eq("op", "c"), exists("o.drop")) // drop collection
-            )
-        );
-        
+            ));
+
         try (final MongoCursor<Document> cursor = oplog.find(filter)
             .cursorType(TailableAwait)
             .maxAwaitTime(1, TimeUnit.SECONDS)
@@ -201,8 +245,9 @@ public class Adapter {
 
             while (cursor.hasNext()) {
                 final Document document = cursor.next();
-                switch(document.get("op", String.class)) {
-                case "i": // Insert 
+                final String op = document.get("op", String.class);
+                switch (op) {
+                case "i": // Insert
                     processInsert(document);
                     break;
                 case "u": // Update
@@ -214,32 +259,37 @@ public class Adapter {
                 case "c": // Command
                     processCommand(document);
                     break;
+                default:
+                    LOG.warn("Unexpected 'op' value in event: {}", op);
                 }
             }
         }
     }
-
 
     private void processInsert(Document document) {
         if (matchesCollection(document)) {
             transcribeDocument(document.get("o", Document.class));
         }
     }
-    
+
     private void processDelete(Document document) {
         if (matchesCollection(document)) {
-            final ObjectId id = document.get("o",Document.class).getObjectId("_id"); 
+            final ObjectId id =
+                document.get("o", Document.class).getObjectId("_id");
             final String topicPath = topicPaths.remove(id);
 
-            topicControl.removeTopics(">" + topicPath, new RemoveCallback.Default());
+            topicControl.removeTopics(">" + topicPath,
+                new RemoveCallback.Default());
         }
     }
 
     private void processUpdate(Document document) {
         if (matchesCollection(document)) {
-            final ObjectId id = document.get("o2",Document.class).getObjectId("_id");             
-            try (final MongoCursor<Document> cursor = collection.find(eq("_id", id)).iterator()) {
-                if(!cursor.hasNext()) {
+            final ObjectId id =
+                document.get("o2", Document.class).getObjectId("_id");
+            try (final MongoCursor<Document> cursor =
+                collection.find(eq("_id", id)).iterator()) {
+                if (!cursor.hasNext()) {
                     LOG.error("Cannot find document with ID {}", id);
                 }
                 transcribeDocument(cursor.next());
@@ -252,10 +302,12 @@ public class Adapter {
         if (commandNamespaceName.equals(update.get("ns")) &&
             update.containsKey("o") &&
             update.get("o", Document.class).containsKey("drop") &&
-            collection.getNamespace().getCollectionName().equals(update.get("o", Document.class).get("drop"))) {
+            collection.getNamespace().getCollectionName()
+                .equals(update.get("o", Document.class).get("drop"))) {
 
             // Remove the descendants of topicRoot .
-            topicControl.removeTopics("?" + topicRoot + "/", new RemoveCallback.Default());            
+            topicControl.removeTopics("?" + topicRoot + "/",
+                new RemoveCallback.Default());
             topicPaths.clear();
         }
     }
@@ -265,7 +317,7 @@ public class Adapter {
     }
 
     private static JSON toBytes(String json) {
-        return Diffusion.dataTypes().json().fromJsonString(json); 
+        return Diffusion.dataTypes().json().fromJsonString(json);
     }
 
 }
