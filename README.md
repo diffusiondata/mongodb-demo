@@ -18,7 +18,7 @@ Reflect a MongoDB collection into the Diffusion/Reappt topic tree.
 
 Establish the simplest MongoDB with replication enabled.
 
-    % mongodb —nodb
+    % mongo —-nodb
     > replicaSet = new ReplSetTest({"nodes" : 1, "nodeOptions": {"dbpath": "/tmp/mongodb"} })
     > replicaSet.startSet()
     > replicaSet.initiate()
