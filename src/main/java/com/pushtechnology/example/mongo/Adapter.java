@@ -87,10 +87,10 @@ public final class Adapter {
             "oplog.rs");
 
         final Session session = Diffusion.sessions()
-            .principal("admin")
-            .password("password")
+            .principal(args.getDiffusionPrincipal())
+            .password(args.getDiffusionCredentials())
             .noReconnection()
-            .open("ws://localhost:8080");
+            .open(args.getDiffusionURL());
 
         final String topicRoot = args.getTopic() + "/" +
             args.getMongoDatabase() + "/" +
@@ -184,7 +184,7 @@ public final class Adapter {
     private void run() {
         final long timeNow = System.currentTimeMillis();
         long topicCount = 0;
-        LOG.info("Trascribing topics from {} to {}", collection.getNamespace(),
+        LOG.info("Transcribing topics from {} to {}", collection.getNamespace(),
             topicRoot);
         try (
             final MongoCursor<Document> cursor = collection.find().iterator()) {
@@ -227,7 +227,7 @@ public final class Adapter {
      * Subscribe to {@code local.oplog.rs}, listening for relevant changes.
      */
     private void relayChanges(long timeNow) {
-        LOG.info("Relaying changes {} to {}", oplog.getNamespace(), topicRoot);
+        LOG.info("Relaying changes from {} to {}", collection.getNamespace(), topicRoot);
 
         final BsonTimestamp now = new BsonTimestamp((int) (timeNow / 1000), 1);
         final Bson filter = and(
